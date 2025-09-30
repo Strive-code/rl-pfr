@@ -1,0 +1,221 @@
+
+    'RLDE_PFR'
+    pop_size=N;
+    pop=Initpop(N,D,lu);
+    fitness=benchmark_func(pop,problem)
+    [tempbest,~]=min(fitness);
+    t1=clock;
+    center = mean(pop, 1); 
+    FES=N;
+    fnew=zeros(pop_size, 1);
+    goodF=zeros(pop_size,1);
+    goodCR=zeros(pop_size,1);
+    p=0.2;
+    F=zeros(pop_size,1);
+    CR=zeros(pop_size,1);
+    mu_sf = zeros(pop_size,1);
+    mu_cr = zeros(pop_size,1);
+    mu_sd=zeros(pop_size,1);
+    mu_crd=zeros(pop_size,1);
+    suc_evol=zeros(1,pop_size);
+    k=1;
+    %% 强化学习相关初始化
+    alpha=0.9;
+    gama=0.9;
+
+    State_num=4;
+    S_num=2;
+    P_num = 3;% 
+    P_num_CR=3;
+    F_space=[0.1,0.4;0.4, 0.7;0.7,1];
+    CR_space=[0.1,0.4;0.4, 0.7;0.7,1];
+    Action_num=S_num*P_num*P_num_CR;
+    Q_table=zeros(State_num,Action_num);
+
+    Achive_a_num=0.6*NP;
+    Achive_a_info=5;
+    Achive_size = [Achive_a_num,Achive_a_info, Action_num];
+    Achive = cell(Achive_size); 
+    Achive_k=ones(1,Action_num);
+    Achive_k_tag=ones(1,Action_num);
+    fdc = cal_fdc(pop, fitness);
+    new_State = getState(fdc);
+     State=new_State;
+     a = ceil(rand*Action_num);
+     Strategy = ceil(a / (P_num * P_num_CR));
+     temp = mod(a - 1, P_num * P_num_CR);
+     F_idx = ceil((temp + 1) / P_num_CR);
+     CR_idx = mod(temp, P_num_CR) + 1;
+     interval_F=F_space(F_idx, :);
+     interval_CR=CR_space(CR_idx, :);
+     %% 演化阶段
+    while FES <= FESMAX
+        %% 相似度计算
+        simility = zeros(Achive_a_num,1);
+        info_for_action= Achive(:, :, a);
+        for i = 1:Achive_a_num
+            simility(i,1) = norm(center - info_for_action{i,1}); 
+        end
+        [~, index] = sort(simility, 'ascend');
+     if (Achive_k(a)==1)&&(Achive_k_tag(a)==1)
+         F = interval_F(1) + (interval_F(2) - interval_F(1)) * rand(pop_size, 1);
+         CR = interval_CR(1) + (interval_CR(2) - interval_CR(1)) * rand(pop_size, 1);
+     elseif ((Achive_k(a)~=1)&&(Achive_k_tag(a)==1))
+             non_inf=Achive_k(a)-1;
+%               pNP = ceil(p * pop_size); 
+                pNP = ceil(p * Achive_a_num);
+             if non_inf<(pNP)
+                 top_index = ceil(rand(pop_size, 1) .* non_inf);
+                 top_index = max(1, top_index);
+             else
+                 top_index = ceil(rand(pop_size, 1) .* pNP); %% select from [1, 2, 3, ..., pNP]
+                 top_index = max(1, top_index); %% to avoid the problem that rand = 0 and thus ceil(rand) = 0
+             end
+             PFIA_rand_index = index(top_index,1);
+              for i = 1:pop_size
+                  mu_sf(i,1) = info_for_action{PFIA_rand_index(i),2};
+                  mu_cr(i,1) = info_for_action{PFIA_rand_index(i),3};
+                  mu_sd(i,1)=info_for_action{PFIA_rand_index(i),4};
+                  mu_crd(i,1)=info_for_action{PFIA_rand_index(i),5};
+             end
+             for i = 1:pop_size
+                 F(i,1) = normrnd(mu_sf(i,1), mu_sd(i,1)); 
+                 CR(i,1)= normrnd(mu_cr(i,1), mu_crd(i,1));
+             end
+     else
+         pNP = ceil(p * Achive_a_num); 
+         top_index = ceil(rand(pop_size, 1) .* pNP); 
+         top_index = max(1, top_index); %% to avoid the problem that rand = 0 and thus ceil(rand) = 0
+         PFIA_rand_index = index(top_index,1);
+         for i = 1:pop_size
+               mu_sf(i,1) = info_for_action{PFIA_rand_index(i),2};
+               mu_cr(i,1) = info_for_action{PFIA_rand_index(i),3};
+               mu_sd(i,1)=info_for_action{PFIA_rand_index(i),4};
+               mu_crd(i,1)=info_for_action{PFIA_rand_index(i),5};
+        end
+        for i = 1:pop_size
+            F(i,1) = normrnd(mu_sf(i,1), mu_sd(i,1)); 
+            CR(i,1)= normrnd(mu_cr(i,1), mu_crd(i,1));
+        end
+     end
+     F = min(max(F, interval_F(1)), interval_F(2));
+     CR = min(max(CR, interval_CR(1)), interval_CR(2));
+     %% 策略选择
+      switch Strategy
+          case 1%cur-to-pbest/1
+                [~, sorted_index] = sort(fitness, 'ascend');
+              r0 = 1 : pop_size;
+              [r1, r2] = gnR1R2(pop_size, size(pop, 1), r0);
+              p_best_rate = rand(pop_size,1) * (0.2 - 2/pop_size) + 2/pop_size; %% choose at least two best solutions
+              pNP = ceil(p_best_rate * pop_size); 
+              randindex = ceil(rand(pop_size, 1) .* pNP); %% select from [1, 2, 3, ..., pNP]
+              randindex = max(1, randindex); %% to avoid the problem that rand = 0 and thus ceil(rand) = 0
+              pbest = pop(sorted_index(randindex), :); %% randomly choose one of the top 100p% solutions
+              vi = pop + F(:, ones(1, D)) .* (pbest - pop + pop(r1, :) - pop(r2, :));
+          case 2%rand/1
+%               [~,best]=min(fitness);
+              for i=1:pop_size
+                    r=[];
+                    indexSet=1:pop_size;
+                    indexSet(i)=[];
+                    temp=floor(rand*(pop_size-1))+1;
+                    r(1)=indexSet(temp);
+                    indexSet(temp)=[];
+                    temp=floor(rand*(pop_size-2))+1;
+                    r(2)=indexSet(temp);
+                    indexSet(temp)=[];
+                    temp=floor(rand*(pop_size-3))+1;
+                    r(3)=indexSet(temp);
+                    vi(i,:)=pop(r(1),:)+F(i)*(pop(r(2),:)-pop(r(3),:));
+              end
+      end
+      vi = boundConstraint(vi,lu);
+      %交叉操作
+      for i=1:pop_size
+          jrand=floor(rand*D)+1;
+          for j=1:D
+              if (rand<CR(i))||(j==jrand)
+                  newx(i,j)=vi(i,j);%二项式交叉
+              else
+                  newx(i,j)=pop(i,j);
+              end
+          end
+          fnew(i)=benchmark_func(newx(i,:),problem);
+      end
+      dif = abs( fitness - fnew);
+       %% I == 0: the parent is better; I == 1: the offspring is better
+      I = (fitness > fnew);
+      dif_val = dif(I == 1);
+%       archive = updateArchive(archive, pop(I == 1, :), fitness(I == 1));
+     for i = 1:pop_size
+         if(fitness(i)>=fnew(i))
+            suc_evol(i) = 1;
+         end
+     end
+%       [best,~]=min(fitness);
+%       reward=((tempbest-best)/tempbest)*10;
+      for i=1:pop_size
+          if(fitness(i)>fnew(i))%记录成功的CR于F,并进行选择操作fitness
+              goodCR(i)=CR(i);
+              goodF(i)=F(i);
+              pop(i,:)=newx(i,:);
+              fitness(i)=fnew(i);%函数值更
+          end
+      end
+%       [best,~]=min(fitness);
+%       reward=((tempbest-best)/tempbest)*10;
+      center = mean(pop, 1);  
+      goodCR=goodCR(goodCR~=0);
+      goodF=goodF(goodF~=0);
+      num_success_params = numel(goodCR);
+      if num_success_params>0
+          sum_dif = sum(dif_val);
+          dif_val = dif_val / sum_dif;
+          Achive{Achive_k(a), 1, a}=center;
+          Achive{Achive_k(a), 2, a}=(dif_val' * (goodF .^ 2)) / (dif_val' * goodF);
+          Achive{Achive_k(a), 3, a}=(dif_val' * goodCR);%(dif_val' * (goodCR .^ 2)) / (dif_val' * goodCR);
+          Achive{Achive_k(a), 4, a}=std(goodF);
+          Achive{Achive_k(a), 5, a}=std(goodCR);
+          Achive_k(a)=Achive_k(a)+1;
+          if(Achive_k(a)>Achive_a_num)
+              Achive_k(a)=1;
+              Achive_k_tag(a)=2;
+          end
+      end
+      Reward = sum(suc_evol)/pop_size;
+      fdc = cal_fdc(pop, fitness);%适应度距离相关性
+      new_State = getState(fdc);
+       Q_table(State,a)=Q_table(State,a)+alpha*(Reward+gama*max(Q_table(new_State,:))-Q_table(State,a));%更新Q表
+       [tau,tau_index]=max(Q_table(State,:));
+       if tau==0
+          a = ceil(rand*Action_num);%使用softmax获取动作
+       else
+          a = softmax_action(Q_table(State,:),tau,tau_index);%使用softmax获取动作
+       end
+         State=new_State;
+         goodF=zeros(N,1);
+         goodCR=zeros(N,1);
+         suc_evol=zeros(1,pop_size);
+         Strategy = ceil(a / (P_num * P_num_CR));
+         temp = mod(a - 1, P_num * P_num_CR);
+         F_idx = ceil((temp + 1) / P_num_CR);
+         CR_idx = mod(temp, P_num_CR) + 1;
+         interval_F=F_space(F_idx, :);
+         interval_CR=CR_space(CR_idx, :);
+         for i=1:N
+                FES=FES+1;
+                if FES==10000*0.1||mod(FES,10000)==0
+                    [kkk,ll]=min(fitness);
+                    RunValue(1,k)=kkk;
+                    Para(k,:)=pop(ll,:);
+                    k=k+1;
+                    fprintf('Algorithm:%s problemIndex:%d Run:%d FES:%d Best:%g State:%d\n','RLDE_PFR',problem,run,FES,kkk,State);
+                end
+                if TimeFlag==0
+                    if min(fitness)<=TEV
+                        TempFES=FES;
+                        TimeFlag=1;
+                    end
+                end
+         end
+     end
